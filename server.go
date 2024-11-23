@@ -1,109 +1,133 @@
-//监听需要代理的客户端请求
+//go:build linux
+// +build linux
+
 package main
 
 import (
+	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"net"
-	"os"
+	"strconv"
 	"syscall"
+
+	"github.com/google/uuid"
+	"golang.org/x/sys/unix"
 )
 
-// 获取原始目的地址
-func getOriginalDst(conn *net.TCPConn) (string, int, error) {
-	// 获取底层文件描述符
-	file, err := conn.File() // conn.File() 返回一个 *os.File 对象
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to get file descriptor: %v", err)
-	}
-	fd := file.Fd() // 获取文件描述符，类型为 uintptr
+var listener net.Listener
 
-	sa, err := unix.Getsockname(int(fd))
-	if err != nil {
-		return "", 0, fmt.Errorf("getsockopt failed: %v", err)
-	} else {
-		switch addr := sa.(type) {
-		case *unix.SockaddrInet4:
-			// 打印 IPv4 地址
-			ip := net.IP(addr.Addr[:]).String()
-			port := addr.Port
-			fmt.Printf("IPv4 Address: %s, Port: %d\n", ip, port)
-
-		case *unix.SockaddrInet6:
-			// 打印 IPv6 地址
-			ip := net.IP(addr.Addr[:]).String()
-			port := addr.Port
-			fmt.Printf("IPv6 Address: %s, Port: %d\n", ip, port)
-
-		case *unix.SockaddrUnix:
-			// 打印 Unix 域套接字地址
-			fmt.Printf("Unix Socket Path: %s\n", addr.Name)
-
-		default:
-			fmt.Println("Unknown address type")
-		}
-	}
-	return "123", 10, nil
-}
-
-func Server() {
-	// 创建一个监听器
-	listener, err := net.Listen("tcp", "192.168.2.3:80")
+func initServer() bool {
+	tmpListener, err := net.Listen("tcp", ConfigParam.Listen)
 	if err != nil {
 		fmt.Println("Error listening:", err)
-		os.Exit(1)
+		return false
 	}
-	defer listener.Close()
 
-	// 获取文件描述符
-	file, err := listener.(*net.TCPListener).File()
+	file, err := tmpListener.(*net.TCPListener).File()
 	if err != nil {
 		fmt.Println("Error getting file descriptor:", err)
-		os.Exit(1)
 	}
 	fd := int(file.Fd())
 
-	// 设置套接字选项为透明
 	err = syscall.SetsockoptInt(fd, syscall.SOL_IP, syscall.IP_TRANSPARENT, 1)
 	if err != nil {
 		fmt.Println("Error setting IP_TRANSPARENT:", err)
-		os.Exit(1)
 	}
+	listener = tmpListener
+	return true
+}
 
-	fmt.Println("Listening on 0.0.0.0:8080 with IP_TRANSPARENT")
+func closeServer() {
+	if listener != nil {
+		err := listener.Close()
+		if err != nil {
+			fmt.Println("Error closing listener:", err)
+		} else {
+			fmt.Println("Server closed")
+		}
+		fmt.Println("Error closing listener:", err)
+	} else {
+		fmt.Println("Server closed")
+	}
+}
+
+func startServer() {
+	fmt.Println("Server started")
+	fmt.Println("Listening on ", ConfigParam.Listen)
 
 	for {
-		// 接受一个新的连接
 		conn, err := listener.Accept()
 		if err != nil {
 			fmt.Println("Error accepting:", err)
 			continue
 		}
 
-		// 处理连接
 		go handleRequest(conn)
 	}
+}
+
+func getOriginalDst(conn *net.TCPConn) (string, error) {
+	file, err := conn.File()
+	if err != nil {
+		return "", fmt.Errorf("failed to get file descriptor: %v", err)
+	}
+	fd := file.Fd() // 获取文件描述符，类型为 uintptr
+
+	sa, err := unix.Getsockname(int(fd))
+	if err != nil {
+		return "", fmt.Errorf("getsockopt failed: %v", err)
+	} else {
+		switch addr := sa.(type) {
+		case *unix.SockaddrInet4:
+			// 打印 IPv4 地址
+			ip := net.IP(addr.Addr[:]).String()
+			port := addr.Port
+			fmt.Printf("rcv connect from IPv4 Address: %s, Port: %d\n", ip, port)
+			return ip + ":" + strconv.Itoa(port), nil
+		//case *unix.SockaddrInet6:
+		//	// 打印 IPv6 地址
+		//	ip := net.IP(addr.Addr[:]).String()
+		//	port := addr.Port
+		//	fmt.Printf("IPv6 Address: %s, Port: %d\n", ip, port)
+
+		//case *unix.SockaddrUnix:
+		//	// 打印 Unix 域套接字地址
+		//	fmt.Printf("Unix Socket Path: %s\n", addr.Name)
+
+		default:
+			fmt.Println("Unknown address type")
+		}
+	}
+	return "", errors.New("Unknown address type")
 }
 
 func handleRequest(conn net.Conn) {
 	// 处理连接的逻辑
 	fmt.Println("New connection accepted")
-	getOriginalDst(conn.(*net.TCPConn))
-	// 读取客户端发送的数据
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		fmt.Println("Error reading:", err)
-		return
+	ipstr, err := getOriginalDst(conn.(*net.TCPConn))
+	if err != nil || ipstr == "" {
+		err := conn.Close()
+		if err != nil {
+			fmt.Println("Error closing connection:", err)
+			return
+		}
 	}
-	fmt.Printf("Received data: %s\n", string(buf[:n]))
+	connID := uuid.New().String()
+	fmt.Printf("Connection ID: %s\n", connID)
 
-	// 向客户端发送响应
-	response := "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"
-	_, err = conn.Write([]byte(response))
-	if err != nil {
-		fmt.Println("Error writing:", err)
-		return
+	clientAddEventConnect(connID, ipstr, conn)
+	// 读取客户端发送的数据
+	buf := make([]byte, 2048)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			fmt.Println("Error reading:", err)
+			conn.Close()
+			clientAddEventDisconnect(connID)
+			return
+		} else {
+			clientAddEventMsg(connID, buf, n)
+		}
 	}
-	conn.Close()
+
 }

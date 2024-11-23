@@ -2,14 +2,23 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
-		"gopkg.in/yaml.v2"
-		"io/ioutil"
-		"log"
-	)
 
-func checkConf() {
-	if _, err := os.Stat("conf.yaml"); os.IsNotExist(err) {
+	"gopkg.in/yaml.v2"
+)
+
+const confFile = "conf.yaml"
+
+type Config struct {
+	Listen string `yaml:"listen"`
+	Server string `yaml:"server"`
+}
+
+var ConfigParam Config = Config{"", ""}
+
+func checkConfFile() bool {
+	if _, err := os.Stat(confFile); os.IsNotExist(err) {
 		fmt.Println("conf.yaml does not exist")
 		return false
 	} else {
@@ -18,35 +27,33 @@ func checkConf() {
 	}
 }
 
-type Config struct {
-	Listen string `yaml:"listen"`
-	Server string `yaml:"server"`
-}
-
-func readConfig() (*Config, error) {
+func loadConf() bool {
 	data, err := ioutil.ReadFile("conf.yaml")
 	if err != nil {
-		return nil, err
+		fmt.Println(err)
+		return false
 	}
 
 	var config Config
 	err = yaml.Unmarshal(data, &config)
 	if err != nil {
-		return nil, err
+		fmt.Println(err)
+		return false
+	} else {
+		fmt.Println(config)
+		ConfigParam = config
 	}
 
-	return &config, nil
+	return true
 }
 
-func main() {
-	if _, err := os.Stat("conf.yaml"); os.IsNotExist(err) {
-		fmt.Println("conf.yaml does not exist")
-	} else {
-		fmt.Println("conf.yaml exists")
-		config, err := readConfig()
-		if err != nil {
-			log.Fatalf("error: %v", err)
-		}
-		fmt.Printf("Listen: %s, Server: %s\n", config.Listen, config.Server)
+func initConf() bool {
+	if checkConfFile() == false {
+		return false
 	}
+
+	if loadConf() == false {
+		return false
+	}
+	return true
 }
