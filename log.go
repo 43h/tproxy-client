@@ -42,7 +42,7 @@ func closeLog() {
 	if logHandle != nil {
 		err := logHandle.Close()
 		if err != nil {
-			log.Println("fail to close file, ", err)
+			LOGE("fail to close log file, ", err)
 		}
 	}
 }
@@ -65,7 +65,7 @@ func delLog() {
 	})
 
 	if err != nil {
-		log.Println("fail to del log, ", err)
+		LOGE("fail to del log, ", err)
 	}
 }
 
