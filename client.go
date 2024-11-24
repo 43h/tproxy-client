@@ -4,26 +4,25 @@ package main
 import (
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"net"
 	"time"
 )
 
 const (
-	MessageTypeLocal      = "local"
-	MessageTypeUpstream   = "upstream"
-	MessageTypeDownstream = "downstream"
+	MessageClassLocal      = "local"
+	MessageClassUpstream   = "upstream"
+	MessageClassDownstream = "downstream"
 )
 
 const (
-	MessageClassConnect   = "connect"
-	MessageClasDisconnect = "disconnect"
-	MessageClasData       = "data"
+	MessageTypeConnect    = "connect"
+	MessageTypeDisconnect = "disconnect"
+	MessageTypeData       = "data"
 )
 
 type Message struct {
-	MessageType  string `json:"message_type"`
 	MessageClass string `json:"message_class"`
+	MessageType  string `json:"message_type"`
 	UUID         string `json:"uuid"`
 	IPStr        string `json:"ip_str"`
 	Length       int    `json:"length"`
@@ -50,36 +49,35 @@ var conn net.Conn
 var status int
 
 func initClientTls() bool {
-	// Define the server address and port
+	LOGI("init client with tls")
 	serverAddr := ConfigParam.Server
 
-	// Create a TLS configuration
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, // Note: InsecureSkipVerify should be used only for testing purposes
+		InsecureSkipVerify: true,
 	}
 
-	// Establish a TLS connection to the server
 	tmpConn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 	if err != nil {
-		LOGE("failed to connect, ", err)
+		LOGE("fail to connect to ", serverAddr, " ", err)
 		return false
+	} else {
+		LOGI("connected to server ", serverAddr)
 	}
 	conn = tmpConn
+	status = Connected
 	return true
 }
 
 func initClient() bool {
-	LOGI("init client")
-	// Define the server address and port
+	LOGI("init client without tls")
 	serverAddr := ConfigParam.Server
 
-	// Establish a connection to the server
 	tmpConn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
 		LOGE("failed to connect, ", err)
 		return false
 	} else {
-		LOGI("connected to server")
+		LOGI("connected to server ", serverAddr)
 	}
 	conn = tmpConn
 	return true
@@ -88,12 +86,13 @@ func initClient() bool {
 func closeClient() {
 	err := conn.Close()
 	if err != nil {
-		LOGE("failed to close client: %v", err)
+		LOGE("fail to close client: %v", err)
 	} else {
 		LOGI("client closed")
 	}
 }
 
+// Todo: when client is closed, the connection should be restarted
 func startClient() {
 	LOGI("client started")
 	go handleEvents()
@@ -102,73 +101,19 @@ func startClient() {
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
-			fmt.Println("Error reading:", err)
+			LOGE("fail to read from upstream ", err)
 			return
 		} else {
-			fmt.Println("Reading from upstream：", n)
+			LOGI("Reading from upstream, length ", n)
 		}
 
 		var msg Message
 		err = json.Unmarshal(buf[:n], &msg)
 		if err != nil {
-			fmt.Println("Error unmarshaling message:", err)
+			LOGE("fail to unmarshaling message,", err)
 			return
 		}
 		messageChannel <- msg
-	}
-}
-
-func handleEventLocal(msg Message) {
-	switch msg.MessageClass {
-	case MessageClassConnect:
-		msg.MessageType = MessageTypeUpstream
-		data, err := json.Marshal(msg)
-		if err != nil {
-			LOGE("Error marshaling message:", err)
-			return
-		}
-		_, err = conn.Write(data)
-		if err != nil {
-			LOGE("Error writing:", err)
-			return
-		} else {
-			LOGD("send to event-connect to upstream, length:", len(data))
-		}
-
-	case MessageClasDisconnect:
-		delete(connections, msg.UUID)
-	case MessageClasData:
-		msg.MessageType = MessageTypeUpstream
-		data, err := json.Marshal(msg)
-		if err != nil {
-			LOGE("Error marshaling message:", err)
-			return
-		}
-		_, err = conn.Write(data)
-		if err != nil {
-			LOGE("Error writing:", err)
-			return
-		} else {
-			LOGE("send to event-data to upstream : ", len(data))
-		}
-	}
-}
-
-func handleEventDownstream(msg Message) {
-	connection, exists := connections[msg.UUID]
-	if !exists {
-		LOGE("connection not found, uuid:", msg.UUID)
-		return
-	}
-
-	if msg.MessageType == MessageClasData {
-		_, err := connection.Conn.Write(msg.Data)
-		if err != nil {
-			LOGE("Error writing to client:", err, " uuid:", msg.UUID)
-			return
-		} else {
-			LOGI("send to client : ", len(msg.Data), " uuid:", msg.UUID)
-		}
 	}
 }
 
@@ -176,18 +121,74 @@ func handleEvents() {
 	for {
 		select {
 		case message := <-messageChannel:
-			switch message.MessageType {
-			case MessageTypeLocal:
+			switch message.MessageClass {
+			case MessageClassLocal:
 				handleEventLocal(message)
-			case MessageTypeDownstream:
+			case MessageClassDownstream:
 				handleEventDownstream(message)
 			default:
+				LOGE("Unknown message class:", message.MessageClass)
 			}
 		}
 	}
 }
 
-func clientAddEventConnect(uuid string, ipStr string, conn net.Conn) {
+func handleEventLocal(msg Message) {
+	switch msg.MessageType {
+	case MessageTypeConnect:
+		msg.MessageClass = MessageClassUpstream
+		data, err := json.Marshal(msg)
+		if err != nil {
+			LOGE(msg.UUID, "fail to marshaling message, ", err)
+			return
+		}
+		_, err = conn.Write(data)
+		if err != nil {
+			LOGE(msg.UUID, " fail to send event-connct to upstream, ", err)
+			return
+		} else {
+			LOGD(msg.UUID, " send to event-connect to upstream, length:", len(data))
+		}
+
+	case MessageTypeDisconnect:
+		delete(connections, msg.UUID)
+		//Todo: send disconnect message to upstream to notify the disconnection
+	case MessageTypeData:
+		msg.MessageClass = MessageClassUpstream
+		data, err := json.Marshal(msg)
+		if err != nil {
+			LOGE(msg.UUID, "fail to marshaling message ", err)
+			return
+		}
+		_, err = conn.Write(data)
+		if err != nil {
+			LOGE(msg.UUID, " fail to send event-data to upstream ", err)
+			return
+		} else {
+			LOGE(msg.UUID, " send event-data to upstream, length ", len(data))
+		}
+	}
+}
+
+func handleEventDownstream(msg Message) {
+	connection, exists := connections[msg.UUID]
+	if !exists {
+		LOGE(msg.UUID, " connection not found")
+		return
+	}
+
+	if msg.MessageType == MessageTypeData {
+		_, err := connection.Conn.Write(msg.Data)
+		if err != nil {
+			LOGE(msg.UUID, " fail to writing to client, ", err)
+			return
+		} else {
+			LOGI(msg.UUID, " send to client, length: ", len(msg.Data))
+		}
+	}
+}
+
+func AddEventConnect(uuid string, ipStr string, conn net.Conn) {
 	connections[uuid] = ConnectionInfo{
 		IPStr:     ipStr,
 		Conn:      conn,
@@ -196,8 +197,8 @@ func clientAddEventConnect(uuid string, ipStr string, conn net.Conn) {
 	}
 
 	message := Message{
-		MessageType:  MessageTypeLocal,
-		MessageClass: MessageClassConnect,
+		MessageClass: MessageClassLocal,
+		MessageType:  MessageTypeConnect,
 		UUID:         uuid,
 		IPStr:        ipStr,
 		Length:       0,
@@ -206,10 +207,10 @@ func clientAddEventConnect(uuid string, ipStr string, conn net.Conn) {
 	messageChannel <- message
 }
 
-func clientAddEventDisconnect(uuid string) {
+func AddEventDisconnect(uuid string) {
 	message := Message{
-		MessageType:  MessageTypeLocal,
-		MessageClass: MessageClasDisconnect,
+		MessageClass: MessageClassLocal,
+		MessageType:  MessageTypeDisconnect,
 		UUID:         uuid,
 		IPStr:        "",
 		Length:       0,
@@ -218,18 +219,14 @@ func clientAddEventDisconnect(uuid string) {
 	messageChannel <- message
 }
 
-func clientAddEventMsg(uuid string, buf []byte, len int) {
+func AddEventMsg(uuid string, buf []byte, len int) {
 	message := Message{
-		MessageType:  MessageTypeLocal,
-		MessageClass: MessageClasData,
+		MessageClass: MessageClassLocal,
+		MessageType:  MessageTypeData,
 		UUID:         uuid,
 		IPStr:        "",
 		Length:       len,
 		Data:         buf[:len],
-	}
-	connection, exists := connections[uuid]
-	if exists {
-		connection.Timestamp = time.Now().Unix()
 	}
 	messageChannel <- message
 }
