@@ -13,53 +13,84 @@ import (
 
 var listener net.Listener
 
-func initServer() bool {
+func initProxy() bool {
 	tmpListener, err := net.Listen("tcp", ConfigParam.Listen)
 	if err != nil {
-		LOGE("Error listening:", err)
+		LOGE("fail to listening ", err)
 		return false
 	}
 
 	file, err := tmpListener.(*net.TCPListener).File()
 	if err != nil {
-		LOGE("Error getting file descriptor:", err)
+		LOGE("fail to get file descriptor:", err)
 		return false
 	}
 	fd := int(file.Fd())
 
 	err = syscall.SetsockoptInt(fd, syscall.SOL_IP, syscall.IP_TRANSPARENT, 1)
 	if err != nil {
-		LOGE("Error setting IP_TRANSPARENT:", err)
+		LOGE("fail to set IP_TRANSPARENT:", err)
 		return false
 	}
 	listener = tmpListener
 	return true
 }
 
-func closeServer() {
+func closeProxy() {
 	if listener != nil {
 		err := listener.Close()
 		if err != nil {
-			LOGE("Error closing listener:", err)
+			LOGE("fail to closing listener ", err)
 		} else {
-			LOGI("Server closed")
+			LOGI("Proxy closed")
 		}
 	} else {
-		LOGI("Server closed(skip)")
+		LOGI("Proxy closed(NULL)")
 	}
 }
 
-func startServer() {
-	LOGI("Server started Listening on ", ConfigParam.Listen)
+func startProxy() {
+	LOGI("Proxy started Listening on ", ConfigParam.Listen)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			LOGE("Error accepting:", err)
+			LOGE("fail to accepting ", err)
 			continue
 		}
 
 		go handleRequest(conn)
+	}
+}
+
+func handleRequest(conn net.Conn) {
+	LOGI("New connection accepted")
+	ipstr, err := getOriginalDst(conn.(*net.TCPConn))
+	if err != nil || ipstr == "" {
+		LOGE("fail to get dest ip")
+		err := conn.Close()
+		if err != nil {
+			LOGE("fail to closing new connection:", err)
+			return
+		}
+	}
+	connID := uuid.New().String()
+	LOGI(connID, " new connection")
+
+	AddEventConnect(connID, ipstr, conn)
+
+	buf := make([]byte, 10240)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			LOGE(connID, " fail to read data ", err)
+			conn.Close()
+			AddEventDisconnect(connID)
+			return
+		} else {
+			LOGI(connId ," Read from client length:", n)
+			AddEventMsg(connID, buf[:n], n)
+		}
 	}
 }
 
@@ -92,34 +123,4 @@ func getOriginalDst(conn *net.TCPConn) (string, error) {
 		}
 	}
 	return "", errors.New("Unknown address type")
-}
-
-func handleRequest(conn net.Conn) {
-	LOGI("New connection accepted")
-	ipstr, err := getOriginalDst(conn.(*net.TCPConn))
-	if err != nil || ipstr == "" {
-		err := conn.Close()
-		if err != nil {
-			LOGE("Error closing new connection:", err)
-			return
-		}
-	}
-	connID := uuid.New().String()
-	LOGI("new Connection ID: %s\n", connID)
-
-	clientAddEventConnect(connID, ipstr, conn)
-
-	buf := make([]byte, 10240)
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			LOGE("Error reading, ", connID, " ", err)
-			conn.Close()
-			clientAddEventDisconnect(connID)
-			return
-		} else {
-			LOGI("Read from client:", connID, " length:", n)
-			clientAddEventMsg(connID, buf[:n], n)
-		}
-	}
 }
