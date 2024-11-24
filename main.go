@@ -20,6 +20,7 @@ func main() {
 	if initClient() == false {
 		return
 	}
+	go startClient()
 	defer closeClient()
 
 	if initServer() == false {
