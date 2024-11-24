@@ -23,9 +23,9 @@ func main() {
 	go startClient()
 	defer closeClient()
 
-	if initServer() == false {
+	if initProxy() == false {
 		return
 	}
-	startServer()
-	defer closeServer()
+	startProxy()
+	defer closeProxy()
 }

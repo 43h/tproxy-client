@@ -41,9 +41,8 @@ func loadConf() bool {
 	} else {
 		LOGI(config)
 		ConfigParam = config
+		return true
 	}
-
-	return true
 }
 
 func initConf() bool {
