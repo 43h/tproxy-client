@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+const (
+	DEBUG = iota
+	INFO
+	WARN
+	ERROR
+)
+
+var logLevel = DEBUG
 var logHandle *os.File
 
 func initLog(flag bool) bool {
@@ -58,5 +66,29 @@ func delLog() {
 
 	if err != nil {
 		log.Println("fail to del log, ", err)
+	}
+}
+
+func LOGD(v ...interface{}) {
+	if logLevel <= DEBUG {
+		log.Println("[DEBUG] ", v)
+	}
+}
+
+func LOGI(v ...interface{}) {
+	if logLevel <= INFO {
+		log.Println("[INFO] ", v)
+	}
+}
+
+func LOGW(v ...interface{}) {
+	if logLevel <= WARN {
+		log.Println("[WARN] ", v)
+	}
+}
+
+func LOGE(v ...interface{}) {
+	if logLevel <= ERROR {
+		log.Println("[ERROR] ", v)
 	}
 }
