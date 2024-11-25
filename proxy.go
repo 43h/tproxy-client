@@ -88,7 +88,7 @@ func handleRequest(conn net.Conn) {
 			AddEventDisconnect(connID)
 			return
 		} else {
-			LOGI(connId ," Read from client length:", n)
+			LOGI(connID, " Read from client length:", n)
 			AddEventMsg(connID, buf[:n], n)
 		}
 	}
@@ -109,7 +109,7 @@ func getOriginalDst(conn *net.TCPConn) (string, error) {
 		case *unix.SockaddrInet4:
 			ip := net.IP(addr.Addr[:]).String()
 			port := addr.Port
-			LOGI("rcv connect from IPv4 Address: %s, Port: %d\n", ip, port)
+			LOGI("rcv connect from IPv4 Address:", ip, "Port:", port)
 			return ip + ":" + strconv.Itoa(port), nil
 		//case *unix.SockaddrInet6:
 		//	ip := net.IP(addr.Addr[:]).String()
