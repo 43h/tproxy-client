@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 	"syscall"
@@ -16,20 +15,20 @@ var listener net.Listener
 func initProxy() bool {
 	tmpListener, err := net.Listen("tcp", ConfigParam.Listen)
 	if err != nil {
-		LOGE("fail to listening ", err)
+		LOGE("proxy fail to listening, ", err)
 		return false
 	}
 
 	file, err := tmpListener.(*net.TCPListener).File()
 	if err != nil {
-		LOGE("fail to get file descriptor:", err)
+		LOGE("proxy fail to get file descriptor, ", err)
 		return false
 	}
 	fd := int(file.Fd())
 
 	err = syscall.SetsockoptInt(fd, syscall.SOL_IP, syscall.IP_TRANSPARENT, 1)
 	if err != nil {
-		LOGE("fail to set IP_TRANSPARENT:", err)
+		LOGE("proxy fail to set IP_TRANSPARENT, ", err)
 		return false
 	}
 	listener = tmpListener
@@ -40,12 +39,12 @@ func closeProxy() {
 	if listener != nil {
 		err := listener.Close()
 		if err != nil {
-			LOGE("fail to closing listener ", err)
+			LOGE("proxy fail to closing listener, ", err)
 		} else {
-			LOGI("Proxy closed")
+			LOGI("proxy closed")
 		}
 	} else {
-		LOGI("Proxy closed(NULL)")
+		LOGI("proxy closed(SKIP)")
 	}
 }
 
@@ -55,27 +54,34 @@ func startProxy() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			LOGE("fail to accepting ", err)
+			LOGE("proxy fail to accepting, ", err)
 			continue
+		} else {
+			go handleRequest(conn)
 		}
-
-		go handleRequest(conn)
 	}
 }
 
 func handleRequest(conn net.Conn) {
-	LOGI("New connection accepted")
+	LOGI("proxy accept new connection")
+	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
+	sourceIP := remoteAddr.IP.String()
+	sourcePort := remoteAddr.Port
+
 	ipstr, err := getOriginalDst(conn.(*net.TCPConn))
 	if err != nil || ipstr == "" {
-		LOGE("fail to get dest ip")
+		LOGE("proxy fail to get dest ip")
 		err := conn.Close()
 		if err != nil {
-			LOGE("fail to closing new connection:", err)
-			return
+			LOGE("proxy fail to closing new connection, ", err)
+		} else {
+			LOGI("proxy closed new connection")
 		}
+		return
 	}
+
 	connID := uuid.New().String()
-	LOGI(connID, " new connection")
+	LOGI(connID, " new connection: ", sourceIP+":"+strconv.Itoa(sourcePort), "---> ", ipstr)
 
 	AddEventConnect(connID, ipstr, conn)
 
@@ -83,12 +89,12 @@ func handleRequest(conn net.Conn) {
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
-			LOGE(connID, " fail to read data ", err)
+			LOGE(connID, " client--->proxy, fail to read data, ", err)
 			conn.Close()
 			AddEventDisconnect(connID)
 			return
 		} else {
-			LOGI(connID, " Read from client length:", n)
+			LOGI(connID, " client--->proxy, length: ", n)
 			AddEventMsg(connID, buf[:n], n)
 		}
 	}
@@ -97,19 +103,18 @@ func handleRequest(conn net.Conn) {
 func getOriginalDst(conn *net.TCPConn) (string, error) {
 	file, err := conn.File()
 	if err != nil {
-		return "", fmt.Errorf("failed to get file descriptor: %v", err)
+		return "", err
 	}
 	fd := file.Fd() // 获取文件描述符，类型为 uintptr
 
 	sa, err := unix.Getsockname(int(fd))
 	if err != nil {
-		return "", fmt.Errorf("getsockopt failed: %v", err)
+		return "", err
 	} else {
 		switch addr := sa.(type) {
 		case *unix.SockaddrInet4:
 			ip := net.IP(addr.Addr[:]).String()
 			port := addr.Port
-			LOGI("rcv connect from IPv4 Address:", ip, "Port:", port)
 			return ip + ":" + strconv.Itoa(port), nil
 		//case *unix.SockaddrInet6:
 		//	ip := net.IP(addr.Addr[:]).String()
