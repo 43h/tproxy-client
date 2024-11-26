@@ -85,8 +85,8 @@ func handleRequest(conn net.Conn) {
 
 	AddEventConnect(connID, ipstr, conn)
 
-	buf := make([]byte, 10240)
 	for {
+		buf := make([]byte, 4096)
 		n, err := conn.Read(buf)
 		if err != nil {
 			LOGE(connID, " client--->proxy, fail to read data, ", err)
