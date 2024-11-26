@@ -1,9 +1,10 @@
-// 链接代理服务器
 package main
 
 import (
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net"
 	"time"
 )
@@ -58,10 +59,10 @@ func initClientTls() bool {
 
 	tmpConn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 	if err != nil {
-		LOGE("fail to connect to ", serverAddr, " ", err)
+		LOGE("client connect to server ", serverAddr, " failed, ", err)
 		return false
 	} else {
-		LOGI("connected to server ", serverAddr)
+		LOGI("client connect to server ", serverAddr, " success")
 	}
 	conn = tmpConn
 	status = Connected
@@ -74,19 +75,20 @@ func initClient() bool {
 
 	tmpConn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
-		LOGE("failed to connect, ", err)
+		LOGE("client connect to server ", serverAddr, " failed, ", err)
 		return false
 	} else {
-		LOGI("connected to server ", serverAddr)
+		LOGI("client connect to server ", serverAddr, " success")
 	}
 	conn = tmpConn
+	status = Connected
 	return true
 }
 
 func closeClient() {
 	err := conn.Close()
 	if err != nil {
-		LOGE("fail to close client: %v", err)
+		LOGE("client fail to close, ", err)
 	} else {
 		LOGI("client closed")
 	}
@@ -97,20 +99,34 @@ func startClient() {
 	LOGI("client started")
 	go handleEvents()
 
-	buf := make([]byte, 10240)
 	for {
-		n, err := conn.Read(buf)
+		lengthBuf := make([]byte, 4)
+		lenData, err := io.ReadFull(conn, lengthBuf)
 		if err != nil {
-			LOGE("fail to read from upstream ", err)
+			if err != io.EOF {
+				LOGE("downstream<---upstream, ", err)
+			} else {
+				LOGI("downstream<---upstream, ", err)
+				return
+			}
+		} else {
+			LOGI("downstream<---upstream, read length, ", lenData)
+		}
+
+		length := binary.BigEndian.Uint32(lengthBuf)
+		dataBuf := make([]byte, length)
+		len, err := io.ReadFull(conn, dataBuf)
+		if err != nil {
+			LOGE("downstream<---upstream, read data, failed, ", err)
 			return
 		} else {
-			LOGI("Reading from upstream, length ", n)
+			LOGI("downstream<---upstream, read data, need: ", length, ", read: ", len, " total: ", len+4)
 		}
 
 		var msg Message
-		err = json.Unmarshal(buf[:n], &msg)
+		err = json.Unmarshal(dataBuf, &msg)
 		if err != nil {
-			LOGE("fail to unmarshaling message,", err)
+			LOGE("downstream fail to unmarshaling message,", err)
 			return
 		}
 		messageChannel <- msg
@@ -137,17 +153,18 @@ func handleEventLocal(msg Message) {
 	switch msg.MessageType {
 	case MessageTypeConnect:
 		msg.MessageClass = MessageClassUpstream
+		LOGI(msg)
 		data, err := json.Marshal(msg)
 		if err != nil {
-			LOGE(msg.UUID, "fail to marshaling message, ", err)
+			LOGE(msg.UUID, " fail to marshaling message, ", err)
 			return
 		}
-		_, err = conn.Write(data)
+		length, err := sndToUpstream(conn, data)
 		if err != nil {
-			LOGE(msg.UUID, " fail to send event-connct to upstream, ", err)
+			LOGE(msg.UUID, " downstream--->upstream, event-connct, ", err)
 			return
 		} else {
-			LOGD(msg.UUID, " send to event-connect to upstream, length:", len(data))
+			LOGD(msg.UUID, " downstream--->upstream, event-connect, snd: ", length)
 		}
 
 	case MessageTypeDisconnect:
@@ -160,12 +177,12 @@ func handleEventLocal(msg Message) {
 			LOGE(msg.UUID, "fail to marshaling message ", err)
 			return
 		}
-		_, err = conn.Write(data)
+		length, err := sndToUpstream(conn, data)
 		if err != nil {
-			LOGE(msg.UUID, " fail to send event-data to upstream ", err)
+			LOGE(msg.UUID, "downstream--->upstream, event-data, fail, ", err)
 			return
 		} else {
-			LOGE(msg.UUID, " send event-data to upstream, length ", len(data))
+			LOGE(msg.UUID, " downstream--->upstream, event-data, send: ", length)
 		}
 	}
 }
@@ -178,12 +195,12 @@ func handleEventDownstream(msg Message) {
 	}
 
 	if msg.MessageType == MessageTypeData {
-		_, err := connection.Conn.Write(msg.Data)
+		length, err := connection.Conn.Write(msg.Data)
 		if err != nil {
-			LOGE(msg.UUID, " fail to writing to client, ", err)
+			LOGE(msg.UUID, "client<---downstream, wtire, fail, ", err)
 			return
 		} else {
-			LOGI(msg.UUID, " send to client, length: ", len(msg.Data))
+			LOGI(msg.UUID, "client<---downstream, write, need: ", msg.Length, " snd: ", length)
 		}
 	}
 }
@@ -229,4 +246,14 @@ func AddEventMsg(uuid string, buf []byte, len int) {
 		Data:         buf[:len],
 	}
 	messageChannel <- message
+}
+
+func sndToUpstream(conn net.Conn, data []byte) (n int, err error) {
+	length := uint32(len(data))
+
+	buf := make([]byte, 4+length)
+	binary.BigEndian.PutUint32(buf[:4], length)
+	copy(buf[4:], data)
+
+	return conn.Write(buf)
 }
