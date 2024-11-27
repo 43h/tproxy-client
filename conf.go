@@ -39,7 +39,7 @@ func loadConf() bool {
 		LOGE(err)
 		return false
 	} else {
-		LOGI(config)
+		LOGI("config: ", config)
 		ConfigParam = config
 		return true
 	}

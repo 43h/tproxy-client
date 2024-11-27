@@ -12,15 +12,15 @@ import (
 const (
 	DEBUG = iota
 	INFO
-	WARN
 	ERROR
 )
 
-var logLevel = DEBUG
+var logLevel = INFO
 var logHandle *os.File
 
-func initLog(flag bool) bool {
-	if flag == false {
+func initLog(debug bool) bool {
+	if debug == true {
+		logLevel = DEBUG
 		return true
 	}
 
@@ -71,19 +71,13 @@ func delLog() {
 
 func LOGD(v ...interface{}) {
 	if logLevel <= DEBUG {
-		log.Println("[DEBUG] ", v)
+		log.Println("[ DEBUG] ", v)
 	}
 }
 
 func LOGI(v ...interface{}) {
 	if logLevel <= INFO {
 		log.Println("[ INFO] ", v)
-	}
-}
-
-func LOGW(v ...interface{}) {
-	if logLevel <= WARN {
-		log.Println("[ WARN] ", v)
 	}
 }
 

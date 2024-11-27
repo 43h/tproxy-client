@@ -47,10 +47,10 @@ type ConnectionInfo struct {
 var connections = make(map[string]ConnectionInfo)
 
 var conn net.Conn
-var status int
+var status int = Disconnected
 
 func initClientTls() bool {
-	LOGI("init client with tls")
+	LOGI("init downstream with tls")
 	serverAddr := ConfigParam.Server
 
 	tlsConfig := &tls.Config{
@@ -59,10 +59,10 @@ func initClientTls() bool {
 
 	tmpConn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 	if err != nil {
-		LOGE("client connect to server ", serverAddr, " failed, ", err)
+		LOGE("downstream--->upstream, ", serverAddr, " connect, fail, ", err)
 		return false
 	} else {
-		LOGI("client connect to server ", serverAddr, " success")
+		LOGI("downstream--->upstream, ", serverAddr, " connect, success")
 	}
 	conn = tmpConn
 	status = Connected
@@ -70,15 +70,15 @@ func initClientTls() bool {
 }
 
 func initClient() bool {
-	LOGI("init client without tls")
+	LOGI("init downstream without tls")
 	serverAddr := ConfigParam.Server
 
 	tmpConn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
-		LOGE("client connect to server ", serverAddr, " failed, ", err)
+		LOGE("downstream--->upstream, ", serverAddr, " connect, fail, ", err)
 		return false
 	} else {
-		LOGI("client connect to server ", serverAddr, " success")
+		LOGI("downstream--->upstream, ", serverAddr, " connect, success")
 	}
 	conn = tmpConn
 	status = Connected
@@ -88,52 +88,64 @@ func initClient() bool {
 func closeClient() {
 	err := conn.Close()
 	if err != nil {
-		LOGE("client fail to close, ", err)
+		LOGE("downstream fail to close, ", err)
 	} else {
-		LOGI("client closed")
+		LOGI("downstream closed")
+	}
+	conn = nil
+	status = Disconnected
+}
+
+func startClient() {
+	go handleEvents()
+	for {
+		for status == Disconnected {
+			if initClient() == true {
+				break
+			} else {
+				time.Sleep(5 * time.Second)
+			}
+		}
+		rcvClient()
 	}
 }
 
-// Todo: when client is closed, the connection should be restarted
-func startClient() {
-	LOGI("client started")
-	go handleEvents()
-
+func rcvClient() {
+	LOGI("downstream start to rcv data")
 	for {
 		lengthBuf := make([]byte, 4)
-		lenData, err := io.ReadFull(conn, lengthBuf)
+		lenLength, err := io.ReadFull(conn, lengthBuf)
 		if err != nil {
-			if err != io.EOF {
-				LOGE("downstream<---upstream, ", err)
-			} else {
-				LOGI("downstream<---upstream, ", err)
-				return
-			}
+			LOGE("downstream<---upstream, read length, fail, ", err)
+			closeClient()
+			return
 		} else {
-			LOGI("downstream<---upstream, read length, ", lenData)
+			LOGD("downstream<---upstream, read length, success, length: ", lenLength)
 		}
 
 		length := binary.BigEndian.Uint32(lengthBuf)
 		dataBuf := make([]byte, length)
-		len, err := io.ReadFull(conn, dataBuf)
+		lenData, err := io.ReadFull(conn, dataBuf)
 		if err != nil {
-			LOGE("downstream<---upstream, read data, failed, ", err)
+			LOGE("downstream<---upstream, read data, fail, ", err)
+			closeClient()
 			return
 		} else {
-			LOGI("downstream<---upstream, read data, need: ", length, ", read: ", len, " total: ", len+4)
+			LOGD("downstream<---upstream, read data, success, need: ", length, ", read: ", lenData, " total: ", lenData+4)
 		}
 
 		var msg Message
 		err = json.Unmarshal(dataBuf, &msg)
 		if err != nil {
-			LOGE("downstream fail to unmarshaling message,", err)
-			return
+			LOGE("downstream unmarshaling message, fail, ", err)
+		} else {
+			messageChannel <- msg
 		}
-		messageChannel <- msg
 	}
 }
 
 func handleEvents() {
+	LOGI("downstream start to handle events")
 	for {
 		select {
 		case message := <-messageChannel:
@@ -153,18 +165,17 @@ func handleEventLocal(msg Message) {
 	switch msg.MessageType {
 	case MessageTypeConnect:
 		msg.MessageClass = MessageClassUpstream
-		LOGI(msg)
 		data, err := json.Marshal(msg)
 		if err != nil {
-			LOGE(msg.UUID, " fail to marshaling message, ", err)
+			LOGE(msg.UUID, " marshaling message, fail, ", err)
 			return
 		}
 		length, err := sndToUpstream(conn, data)
 		if err != nil {
-			LOGE(msg.UUID, " downstream--->upstream, event-connct, ", err)
+			LOGE(msg.UUID, " downstream--->upstream, write, event-connct, fail, ", err)
 			return
 		} else {
-			LOGD(msg.UUID, " downstream--->upstream, event-connect, snd: ", length)
+			LOGD(msg.UUID, " downstream--->upstream, write, event-connect, success, length: ", length)
 		}
 
 	case MessageTypeDisconnect:
@@ -179,10 +190,10 @@ func handleEventLocal(msg Message) {
 		}
 		length, err := sndToUpstream(conn, data)
 		if err != nil {
-			LOGE(msg.UUID, "downstream--->upstream, event-data, fail, ", err)
+			LOGE(msg.UUID, " downstream--->upstream, write, event-data, fail, ", err)
 			return
 		} else {
-			LOGE(msg.UUID, " downstream--->upstream, event-data, send: ", length)
+			LOGD(msg.UUID, " downstream--->upstream, write, event-data, success, length: ", length)
 		}
 	}
 }
@@ -197,10 +208,10 @@ func handleEventDownstream(msg Message) {
 	if msg.MessageType == MessageTypeData {
 		length, err := connection.Conn.Write(msg.Data)
 		if err != nil {
-			LOGE(msg.UUID, "client<---downstream, wtire, fail, ", err)
+			LOGE(msg.UUID, "client<---downstream, write, fail, ", err)
 			return
 		} else {
-			LOGI(msg.UUID, "client<---downstream, write, need: ", msg.Length, " snd: ", length)
+			LOGD(msg.UUID, "client<---downstream, write, success, need: ", msg.Length, " snd: ", length)
 		}
 	}
 }

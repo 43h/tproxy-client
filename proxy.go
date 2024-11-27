@@ -15,20 +15,20 @@ var listener net.Listener
 func initProxy() bool {
 	tmpListener, err := net.Listen("tcp", ConfigParam.Listen)
 	if err != nil {
-		LOGE("proxy fail to listening, ", err)
+		LOGE("proxy listening, fail, ", err)
 		return false
 	}
 
 	file, err := tmpListener.(*net.TCPListener).File()
 	if err != nil {
-		LOGE("proxy fail to get file descriptor, ", err)
+		LOGE("proxy get file descriptor, fail, ", err)
 		return false
 	}
 	fd := int(file.Fd())
 
 	err = syscall.SetsockoptInt(fd, syscall.SOL_IP, syscall.IP_TRANSPARENT, 1)
 	if err != nil {
-		LOGE("proxy fail to set IP_TRANSPARENT, ", err)
+		LOGE("proxy set IP_TRANSPARENT, fail, ", err)
 		return false
 	}
 	listener = tmpListener
@@ -39,7 +39,7 @@ func closeProxy() {
 	if listener != nil {
 		err := listener.Close()
 		if err != nil {
-			LOGE("proxy fail to closing listener, ", err)
+			LOGE("proxy closing listener, fail, ", err)
 		} else {
 			LOGI("proxy closed")
 		}
@@ -63,19 +63,19 @@ func startProxy() {
 }
 
 func handleRequest(conn net.Conn) {
-	LOGI("proxy accept new connection")
+	LOGD("proxy accept new connection")
 	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
 	sourceIP := remoteAddr.IP.String()
 	sourcePort := remoteAddr.Port
 
 	ipstr, err := getOriginalDst(conn.(*net.TCPConn))
 	if err != nil || ipstr == "" {
-		LOGE("proxy fail to get dest ip")
+		LOGE("proxy get dst ip, fail, ", err)
 		err := conn.Close()
 		if err != nil {
-			LOGE("proxy fail to closing new connection, ", err)
+			LOGE("proxy closing new connection, fail, ", err)
 		} else {
-			LOGI("proxy closed new connection")
+			LOGD("proxy closed new connection, success")
 		}
 		return
 	}
@@ -89,12 +89,12 @@ func handleRequest(conn net.Conn) {
 		buf := make([]byte, 4096)
 		n, err := conn.Read(buf)
 		if err != nil {
-			LOGE(connID, " client--->proxy, fail to read data, ", err)
+			LOGE(connID, " client--->proxy, read, fail, ", err)
 			conn.Close()
 			AddEventDisconnect(connID)
 			return
 		} else {
-			LOGI(connID, " client--->proxy, length: ", n)
+			LOGD(connID, " client--->proxy, read, success, length: ", n)
 			AddEventMsg(connID, buf[:n], n)
 		}
 	}
