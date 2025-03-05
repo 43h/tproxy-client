@@ -11,7 +11,7 @@ var version = flag.Bool("v", false, "print version and exit")
 func main() {
 	flag.Parse()
 	if *version {
-		fmt.Println("v0.0.1-20241127")
+		fmt.Println("v0.0.2-20250306")
 		return
 	}
 	if initLog(*logDebug) == false {
@@ -23,9 +23,6 @@ func main() {
 		return
 	}
 
-	if initClient() == false {
-		return
-	}
 	go startClient()
 	defer closeClient()
 
