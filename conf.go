@@ -10,8 +10,8 @@ import (
 const confFile = "conf.yaml"
 
 type Config struct {
-	Listen string `yaml:"listen"`
-	Server string `yaml:"server"`
+	Listen string `yaml:"listen"` //local listen
+	Server string `yaml:"server"` //remote server
 }
 
 var ConfigParam Config = Config{"", ""}
